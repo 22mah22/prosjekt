@@ -6,8 +6,13 @@ That's how we can use DMA and multicast.
 */
 
 #include <stdio.h>
+#include <pthread.h>
 #include "sisci_api.h"
 #include "sisci_error.h"
+#include "sisci_types.h"
+#include "process_video.h"
+#include "videoplayer.h"
+
 
 //Defines
 #define SEGMENT_SIZE 1024
@@ -25,7 +30,7 @@ sci_error_t err;
 sci_remote_segment_t r_seg;
 size_t remote_segment_size;
 sci_map_t r_map;
-volatile int* remote_address;
+static volatile void* remote_address;
 
 
 
@@ -52,14 +57,58 @@ int main(int argc, char* argv[]){
         return 1;
     }
     remote_segment_size = SCIGetRemoteSegmentSize(r_seg);
-    remote_address = (volatile int*) SCIMapRemoteSegment(r_seg, &r_map, 0, remote_segment_size, 0, NO_FLAGS, &err);
+    remote_address = (volatile AVFrame*) SCIMapRemoteSegment(r_seg, &r_map, 0, remote_segment_size, 0, NO_FLAGS, &err);
     if(err != SCI_ERR_OK){
         printf("Error mapping remote segment: %s\n", SCIGetErrorString(err));
         return 1;
     }
 
-    //Send data
-    remote_address[0] = 0xdeadbeef;
+    //create videoplayer
+    int err = create_videoplayer();
+    if(err != 0){
+        printf("Error creating videoplayer: %s\n", SCIGetErrorString(err));
+        return 1;
+    }
+
+    //allocate AVframe queue
+    AVFrame_Q* q = avframe_queue_alloc(60);
+    if(!q){
+        printf("Error allocating AVFrame queue: %s\n", SCIGetErrorString(err));
+        return 1;
+    }
+
+    char* filename = "frogs.mp4";
+
+    //start video processing in a separate thread
+    pthread_t video_thread;
+    process_video_args args = {q, filename};
+    err = pthread_create(&video_thread, NULL, process_video, &args);
+    if(err != 0){
+        printf("Error creating video processing thread: %s\n", SCIGetErrorString(err));
+        return 1;
+    }
+
+    //Playing frames as we transfer them
+    AVFrame* frame = av_frame_alloc();
+    uint32_t delay_time = 0;
+    while(1){
+        //It should wait here until there is a frame to play
+        frame = avframe_queue_pop(q);
+        if(frame){
+            //Transfer the frame over PCIe:
+            memcpy((void *) remote_address, frame, sizeof(AVFrame));
+            //Play the frame
+            update_videoplayer(frame, delay_time);
+            delay_time = FRAME_RATE - SDL_GetTicks() % FRAME_RATE;
+        }
+        else{
+            printf("Error popping AVFrame from queue: %s\n", SCIGetErrorString(err));
+            return 1;
+            }
+        
+    }
+    // Deallocate AVFrame
+    av_frame_free(&frame);
 
     //Clean up
     

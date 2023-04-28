@@ -9,6 +9,8 @@ That's how we can use DMA and multicast.
 #include <unistd.h>
 #include "sisci_api.h"
 #include "sisci_error.h"
+#include "videoplayer.h"
+#include <libavcodec/avcodec.h>
 
 //Defines
 #define SEGMENT_SIZE 1024
@@ -89,12 +91,34 @@ int main(int argc, char* argv[]){
     //Cast the mapped address to a pointer to an unsigned int
     //and wait for the server to write to it
 
-    while(*((unsigned int*)map_addr) == 0){
-        SleepMilliseconds(100);
+    //create videoplayer
+    int err = create_videoplayer();
+    if(err != 0){
+        printf("Error creating videoplayer: %s\n", SCIGetErrorString(err));
+        return 1;
     }
 
-    // print celebratory message
-    printf("Received data: %s\n", (char*)map_addr);
+    AVFrame* frame = av_frame_alloc();
+    if(!frame){
+        printf("Error allocating frame\n");
+        return 1;
+    }
+
+    uint32_t delay_time = FRAME_RATE;
+    //wait for the server to write to the segment
+    while(1){
+        if((void*)map_addr == NULL){
+            // Only before the server has written to the segment
+            // One frame lasts 33.3 ms so otherwise this would be too much
+            SleepMilliseconds(100);
+        }
+        else{
+            // Hopefully the delay time here works as an actual delay
+            memcpy(frame, (AVFrame*)map_addr, sizeof(AVFrame));
+            update_videoplayer(frame, delay_time);
+            delay_time = FRAME_RATE - SDL_GetTicks() % FRAME_RATE;
+        }
+    }
 
     //clean up
     SCISetSegmentUnavailable(l_seg, ADAPTER_NO, NO_FLAGS, &err);
