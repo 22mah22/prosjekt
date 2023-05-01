@@ -4,10 +4,13 @@ PTHREAD_CFLAGS=-D_REENTRANT
 INCLUDES=-Iinclude -I/opt/DIS/include -I/opt/DIS/src/include -I/opt/DIS/include/dis
 
 
-SERVER_SRCS=server.c
-CLIENT_SRCS=client.c
-SERVER_OBJS=$(SERVER_SRCS:%.c=%.o)
-CLIENT_OBJS=$(CLIENT_SRCS:%.c=%.o)
+#SERVER_SRCS=server.c
+#CLIENT_SRCS=client.c
+#SERVER_OBJS=$(SERVER_SRCS:%.c=%.o)
+#CLIENT_OBJS=$(CLIENT_SRCS:%.c=%.o)
+SERVER_OBJS=server.o process_video.o videoplayer.o
+CLIENT_OBJS=client.o videoplayer.o
+
 
 #Library stuff?
 BITS=$(shell sh -c 'getconf LONG_BIT || echo NA')
@@ -38,6 +41,9 @@ server: $(SERVER_OBJS)
 
 client: $(CLIENT_OBJS)
 	$(CC) $(INCLUDES) $(PTHREAD_CFLAGS) $^ -o $@ $(LFLAGS)
+
+%.o: %.c %.h
+	$(CC) $(CFLAGS) $(INCLUDES) $(PTHREAD_CFLAGS)  -c $< -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) $(INCLUDES) $(PTHREAD_CFLAGS)  -c $< -o $@
