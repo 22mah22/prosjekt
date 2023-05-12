@@ -1,16 +1,8 @@
+# Makefile
 CC = gcc
-CFLAGS=-g -m64 -Wall
-PTHREAD_CFLAGS=-D_REENTRANT 
-INCLUDES=-Iinclude -I/opt/DIS/include -I/opt/DIS/src/include -I/opt/DIS/include/dis
-
-
-#SERVER_SRCS=server.c
-#CLIENT_SRCS=client.c
-#SERVER_OBJS=$(SERVER_SRCS:%.c=%.o)
-#CLIENT_OBJS=$(CLIENT_SRCS:%.c=%.o)
-SERVER_OBJS=server.o process_video.o videoplayer.o
-CLIENT_OBJS=client.o videoplayer.o
-
+# Compiler flags: all warnings + debugger meta-data
+CFLAGS = -Wall -g -m64 -Wall -D_REENTRANT
+INCLUDES=-Iinclude -I/opt/DIS/include -I/opt/DIS/src/include -I/opt/DIS/include/dis 
 
 #Library stuff?
 BITS=$(shell sh -c 'getconf LONG_BIT || echo NA')
@@ -26,31 +18,31 @@ endif
 ifeq ($(BITS),64)
 LIB_DIRECTORY=lib64
 endif
+# External libraries: 
+LIBS = -Wl,-L/opt/DIS/$(LIB_DIRECTORY),-rpath,/opt/DIS/$(LIB_DIRECTORY),-lsisci -lSDL2 -lavcodec -lavformat -lavutil -lpthread 
 
-LD=$(CC)
-LFLAGS=-Wl,-L/opt/DIS/$(LIB_DIRECTORY),-rpath,/opt/DIS/$(LIB_DIRECTORY),-lsisci
+# Pre-defined macros for conditional compilation
+DEFS = -DDEBUG_FLAG -DEXPERIMENTAL=0
 
-#End of library stuff
+# The final executable program file, i.e. name of our program
+BIN = server
+BIN2 = client
 
-all: server client
+# Object files from which $BIN depends
+SERVER_OBJS = process_video.o videoplayer.o
+CLIENT_OBJS = videoplayer.o
 
-#.PHONY: all clean executables 
+$(BIN): $(SERVER_OBJS) $(BIN).c
+	$(CC) $(CFLAGS) $(DEFS) $(INCLUDES) $(SERVER_OBJS) $(BIN).c $(LIBS) -o $(BIN)
 
-server: $(SERVER_OBJS)
-	$(CC) $(INCLUDES) $(PTHREAD_CFLAGS) $^ -o $@ $(LFLAGS)
-
-client: $(CLIENT_OBJS)
-	$(CC) $(INCLUDES) $(PTHREAD_CFLAGS) $^ -o $@ $(LFLAGS)
+$(BIN2): $(CLIENT_OBJS) $(BIN2).c
+	$(CC) $(CFLAGS) $(DEFS) $(INCLUDES) $(CLIENT_OBJS) $(BIN2).c $(LIBS) -o $(BIN2)
 
 %.o: %.c %.h
-	$(CC) $(CFLAGS) $(INCLUDES) $(PTHREAD_CFLAGS)  -c $< -o $@
-
-%.o: %.c
-	$(CC) $(CFLAGS) $(INCLUDES) $(PTHREAD_CFLAGS)  -c $< -o $@
-
-%: %.o
-	$(LD) $^ -o $@ $(LFLAGS)
-
+	$(CC) -c $(CFLAGS) $(DEFS) $(INCLUDES) $< -o $@
 
 clean:
-	rm -f $(SERVER_OBJS) $(CLIENT_OBJS) server client
+	rm -f *~ *.o $(BIN)
+
+depend:
+	makedepend -Y -- $(CFLAGS) $(DEFS) -- *.c

@@ -7,16 +7,10 @@
 
 // Might be excessive, should be trimmed down to only what is needed
 #include <libavcodec/avcodec.h>
-#include <libavdevice/avdevice.h>
-#include <libavfilter/avfilter.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
 #include <libavutil/avutil.h>
-#include <libpostproc/postprocess.h>
-#include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
-#include <libavutil/frame.h>
-#include <libavutil/imgutils.h>
+#include <libavutil/pixfmt.h>
 
 
 // IMPORT macro will be defined by the implementation file
@@ -31,21 +25,25 @@
 
 // opaque:
 typedef struct AVFrame_Q AVFrame_Q;
+EXTERN void av_frame_deep_copy(AVFrame* dest, const AVFrame* src);
 
-EXTERN void avframe_Q_alloc(AVFrame_Q* q, int capacity);
+EXTERN int ffmpeg_init();
+EXTERN AVFrame_Q* avframe_Q_alloc(int capacity);
 EXTERN void avframe_Q_destroy(AVFrame_Q* q);
 EXTERN int avframe_Q_push(AVFrame_Q* q, AVFrame* frame);
 EXTERN int avframe_Q_pop(AVFrame_Q* q, AVFrame* dest);
 EXTERN int avframe_Q_get_size(AVFrame_Q* q);
+EXTERN int avframe_Q_flush(AVFrame_Q* q);
 
 // Arg struct for process_video
-EXTERN struct process_video_args{
+struct process_video_args{
     char* filename;
     AVFrame_Q* q;
-}
+    int stop_threshold;
+} process_video_args;
 
 // Function prototypes
-EXTERN void process_video(void* arg);
+EXTERN void* process_video(void* arg);
 
 
 #undef Process_video_IMPORT

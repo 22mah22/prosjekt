@@ -8,10 +8,6 @@
 #define Process_video_IMPORT
 #include "process_video.h"
 
-
-// private variables are defined using static:
-static uint8_t nodeID = 4;
-
 // publicly accessible but opaque data structure:
 struct AVFrame_Q{
     AVFrame** frames;
@@ -22,21 +18,35 @@ struct AVFrame_Q{
     pthread_mutex_t mutex;
     pthread_cond_t not_empty;
     pthread_cond_t not_full;
+};
+
+//Idk if this is useful?
+void av_frame_deep_copy(AVFrame* dest, const AVFrame* src) {
+    dest->format = src->format;
+    dest->width = src->width;
+    dest->height = src->height;
+    dest->channels = src->channels;
+    dest->channel_layout = src->channel_layout;
+    dest->nb_samples = src->nb_samples;
+
+    av_frame_get_buffer(dest, 32);
+    av_frame_copy(dest, src);
+    av_frame_copy_props(dest, src);
 }
 
-
-// private functions are defined using static:
-static void Process_video_private_function(void) {
-    printf("test");
+int ffmpeg_init(){
+    //Initialize the FFMPEG library. Deprecation issues?
+    av_register_all();
+    avcodec_register_all();
+    return 0;
 }
-
 
 // publicly accessible functions can be implemented here:
 
     /*
     * Initialize the queue.
     */
-AVFrame_Q* avframe_queue_alloc(AVFrameQueue* q, int capacity) {
+AVFrame_Q* avframe_Q_alloc(int capacity) {
     AVFrame_Q* q = malloc(sizeof(AVFrame_Q));
     if (!q) {
         return NULL;
@@ -74,7 +84,7 @@ AVFrame_Q* avframe_queue_alloc(AVFrameQueue* q, int capacity) {
     /*
     * Destroy the queue.
     */
-void avframe_queue_destroy(AVFrameQueue* q) {
+void avframe_Q_destroy(AVFrame_Q* q) {
     for (int i = 0; i < q->capacity; i++) {
         av_frame_free(&q->frames[i]);
     }
@@ -89,7 +99,31 @@ void avframe_queue_destroy(AVFrameQueue* q) {
     * Push a frame into the queue.
     * Return 0 if successful, -1 if the queue is full.
     */
-int avframe_queue_push(AVFrameQueue* q, AVFrame* frame) {
+   int avframe_Q_push(AVFrame_Q* q, AVFrame* frame) {
+    pthread_mutex_lock(&q->mutex);
+
+    while (q->size == q->capacity) {
+        printf("Queue is full, at %i\n", q->size);
+        pthread_cond_wait(&q->not_full, &q->mutex);
+    }
+
+    //This aint gonna work
+    //Cant allocate without deallocating
+    //Work on deep copying into q-rear instead? Same principle as av_frame_copy
+
+    //Ok gringo what about this then:
+    av_frame_deep_copy(q->frames[q->rear], frame);
+
+    q->rear = (q->rear + 1) % q->capacity;
+    q->size++;
+
+    pthread_cond_signal(&q->not_empty);
+    pthread_mutex_unlock(&q->mutex);
+    return 0;
+}
+
+//OLD, shallow copies?
+/*int avframe_Q_push(AVFrame_Q* q, AVFrame* frame) {
     pthread_mutex_lock(&q->mutex);
 
     while (q->size == q->capacity) {
@@ -102,33 +136,32 @@ int avframe_queue_push(AVFrameQueue* q, AVFrame* frame) {
 
     pthread_cond_signal(&q->not_empty);
     pthread_mutex_unlock(&q->mutex);
-    return 1;
-}
+    return 0;
+}*/
 
     /*
     * Pop a frame from the queue.
     * Return NULL if the queue is empty.
     */
-int avframe_queue_pop(AVFrame_Q* q, AVFrame* dest) {
+int avframe_Q_pop(AVFrame_Q* q, AVFrame* dest) {
     pthread_mutex_lock(&q->mutex);
 
     while (q->size == 0) {
         pthread_cond_wait(&q->not_empty, &q->mutex);
     }
-
-    memcpy(dest, q->frames[q->front], sizeof(AVFrame));
+    av_frame_deep_copy(dest, q->frames[q->rear]);
     q->front = (q->front + 1) % q->capacity;
     q->size--;
 
     pthread_cond_signal(&q->not_full);
     pthread_mutex_unlock(&q->mutex);
-    return 1;
+    return 0;
 }
 
     /*
     * Get the size of the queue.
     */
-int avframe_queue_get_size(AVFrameQueue* q) {
+int avframe_Q_get_size(AVFrame_Q* q) {
     int size = 0;
     pthread_mutex_lock(&q->mutex);
     size = q->size;
@@ -136,12 +169,22 @@ int avframe_queue_get_size(AVFrameQueue* q) {
     return size;
 }
 
+int avframe_Q_flush(AVFrame_Q* q) {
+    pthread_mutex_lock(&q->mutex);
+    q->front = 0;
+    q->rear = 0;
+    q->size = 0;
+    pthread_mutex_unlock(&q->mutex);
+    return 0;
+}
+
 /*
 * Function for breaking down the video into frames.
 * The frames are put into a queue.
 */
 
-void process_video(void* arg){
+void *process_video(void* arg){
+
     // Cast the argument to the correct type
     struct process_video_args* args = (struct process_video_args*) arg;
     // Local variables
@@ -149,16 +192,17 @@ void process_video(void* arg){
     AVCodec* codec = NULL;
 
     //Initialize the FFMPEG library. Deprecation issues?
-    avformat_network_init();
+    av_register_all();
     avcodec_register_all();
 
     /*
     * Get the format of the file.
     */
+
     int ret = avformat_open_input(&format_ctx, args->filename, NULL, NULL);
     if (ret < 0) {
         fprintf(stderr, "Failed to open input file: %s\n", av_err2str(ret));
-        return;
+        return NULL;
     }
 
     /*
@@ -168,7 +212,7 @@ void process_video(void* arg){
     if (ret < 0) {
         fprintf(stderr, "Failed to read stream information: %s\n", av_err2str(ret));
         avformat_close_input(&format_ctx);
-        return;
+        return NULL;
     }
 
     /*
@@ -179,7 +223,7 @@ void process_video(void* arg){
     if (stream_index < 0) {
         fprintf(stderr, "Failed to find video stream: %s\n", av_err2str(stream_index));
         avformat_close_input(&format_ctx);
-        return;
+        return NULL;
     }
 
     /*
@@ -188,7 +232,7 @@ void process_video(void* arg){
     if (!codec_ctx) {
         fprintf(stderr, "Failed to allocate codec context.\n");
         avformat_close_input(&format_ctx);
-        return;
+        return NULL;
     }
 
     /*
@@ -199,7 +243,7 @@ void process_video(void* arg){
         fprintf(stderr, "Failed to copy codec parameters to codec context: %s\n", av_err2str(ret));
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&format_ctx);
-        return;
+        return NULL;
     }
 
     /*
@@ -210,7 +254,7 @@ void process_video(void* arg){
         fprintf(stderr, "Failed to open codec: %s\n", av_err2str(ret));
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&format_ctx);
-        return;
+        return NULL;
     }
 
     /*
@@ -218,16 +262,15 @@ void process_video(void* arg){
     * Uncompressed frame.
     */
 
-   AVFrame* pFrame = av_frame_alloc();
-        if (!pFrame) {
+   AVFrame* frame = av_frame_alloc();
+        if (!frame) {
             fprintf(stderr, "Failed to allocate frame.\n");
             return NULL;
         }
     
-    // Cancel condition is a WIP and is not used yet
-    int cancel_condition = 0;
     int frameFinished = 0;
-    while(cancel_condition != -1){
+    //This method will eventually lead to integer overflow
+    while(args->stop_threshold != 0){
         /*
         * Allocated and deallocated for each frame.
         */
@@ -239,16 +282,20 @@ void process_video(void* arg){
             // Kind of redundant since we already determined the stream index
             if (packet.stream_index == stream_index) {
                 // Decode the video frame
-                avcodec_decode_video2(codec_ctx, pFrame, &frameFinished, &packet);
+                avcodec_decode_video2(codec_ctx, frame, &frameFinished, &packet);
 
                 // If we got a frame, process it
-                if (frameFinished) {
+                if (frameFinished && frame->format != -1) {
                     // Do something with the frame here
 
                     // Push the frame into the queue
                     // This is a blocking call
                     // This is also atomic
-                    avframe_queue_push(args->q, pFrame);
+                    if(avframe_Q_push(args->q, frame)){
+                        printf("Failed to push frame into queue\n");
+                    }
+
+                    args->stop_threshold--;
                 }
             }
 
@@ -258,11 +305,13 @@ void process_video(void* arg){
         }
         else {
                 // Video ended, skip backwards until the end of the video (hopefully)
-                av_seek_frame(pFormatCtx, -1, 10000, AVSEEK_FLAG_BACKWARD);
+                printf("Video ended\n");
+                av_seek_frame(format_ctx, -1, 10000, AVSEEK_FLAG_BACKWARD);
         }
     }
     // Free the frame and the codec context
-    av_frame_free(&pFrame);
+    av_frame_free(&frame);
     avcodec_free_context(&codec_ctx);
     avformat_close_input(&format_ctx);
+    return NULL;
 }
