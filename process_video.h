@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <pthread.h>
 
-// Might be excessive, should be trimmed down to only what is needed
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
@@ -13,9 +12,10 @@
 #include <libavutil/pixfmt.h>
 
 
-// IMPORT macro will be defined by the implementation file
-// Other clients will not define it, and will get an extern declaration
-// This prevents the compiler from complaining about multiple definitions
+/* IMPORT macro will be defined by the implementation file
+Other clients will not define it, and will get an extern declaration
+This prevents the compiler from complaining about multiple definitions
+*/
 
 #ifdef Process_video_IMPORT
     #define EXTERN
@@ -25,7 +25,6 @@
 
 // opaque:
 typedef struct AVFrame_Q AVFrame_Q;
-EXTERN void av_frame_deep_copy(AVFrame* dest, const AVFrame* src);
 
 EXTERN int ffmpeg_init();
 EXTERN AVFrame_Q* avframe_Q_alloc(int capacity);

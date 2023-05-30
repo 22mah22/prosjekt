@@ -24,6 +24,13 @@ That's how we can use DMA and multicast.
 
 //Global variables
 sci_error_t err;
+    
+typedef struct {
+    sci_desc_t v_dev;
+    sci_local_segment_t l_seg;
+    sci_map_t l_map;
+    volatile void* map_addr;
+} SISCI_local_segment;
 
 sci_desc_t v_dev_frame;
 sci_local_segment_t l_seg_frame;
@@ -175,7 +182,7 @@ int main(int argc, char* argv[]){
     }
     
 
-    uint32_t delay_time = FRAME_RATE;
+    uint32_t delay_time = FRAME_DELAY;
     //DOuble check if this is correct
     //Need a buffer between CISCI address and AVFrame
     // Do I actually or will the texture work as a buffer?
@@ -183,6 +190,66 @@ int main(int argc, char* argv[]){
     //wait for the server to write to the segment
     //*(int*)map_addr = 0;
     while(1){
+        // Update frame data
+        int old_buffer_size = frame_data->buffer_size;
+        memcpy(frame_data, (FrameData*)map_addr_framedata, sizeof(FrameData));
+        if(frame_data->buffer_size != old_buffer_size){
+            // Update size of frame segment
+            SCISetSegmentUnavailable(l_seg_frame, ADAPTER_NO, NO_FLAGS, &err);
+            if(err != SCI_ERR_OK){
+                printf("Error setting segment unavailable: %s\n", SCIGetErrorString(err));
+                return 1;
+            }
+
+            SCIUnmapSegment(l_map_frame, NO_FLAGS, &err);
+            if(err != SCI_ERR_OK){
+                printf("Error unmapping segment: %s\n", SCIGetErrorString(err));
+                return 1;
+            }
+
+            SCIRemoveSegment(l_seg_frame, NO_FLAGS, &err);
+            if(err != SCI_ERR_OK){
+                printf("Error removing segment: %s\n", SCIGetErrorString(err));
+                return 1;
+            }
+
+            // Re-create
+            SCICreateSegment(v_dev_frame, &l_seg_frame, FRAME_SEGMENT_ID, frame_data->buffer_size , NO_CALLBACK, NO_ARGS, SCI_FLAG_BROADCAST, &err);
+            if(err != SCI_ERR_OK){
+                printf("Error creating local segment: %s\n", SCIGetErrorString(err));
+                return 1;
+            }
+
+            
+            SCIPrepareSegment(l_seg_frame, ADAPTER_NO, SCI_FLAG_BROADCAST, &err);
+            if(err == SCI_ERR_OK){
+                size_t offset = 0;
+                size_t size = frame_data->buffer_size;
+                void* suggested_addr = NULL;
+                map_addr_frame = SCIMapLocalSegment(l_seg_frame, &l_map_frame, offset, size, suggested_addr, NO_FLAGS, &err);
+                if (err != SCI_ERR_OK) {
+                    printf("Error mapping local segment: %s\n", SCIGetErrorString(err));
+                    return 1;
+                }
+            }
+            else{
+                printf("Error preparing local segment: %s\n", SCIGetErrorString(err));
+                return 1;
+            }
+
+
+            // Set the segment available
+            SCISetSegmentAvailable(l_seg_frame, ADAPTER_NO, NO_FLAGS, &err);
+            if(err != SCI_ERR_OK){
+                printf("Error setting segment available: %s\n", SCIGetErrorString(err));
+                return 1;
+            }
+            else{
+                printf("Segment set available\n");
+            }
+        }
+        
+        // Frame processing
         if(*(int*)map_addr_frame == 0){
             // Only before the server has written to the segment
             // One frame lasts 33.3 ms so otherwise this would be too much
@@ -202,7 +269,7 @@ int main(int argc, char* argv[]){
                 printf("AVFrame created successfully \n");
             }
             update_videoplayer(&vp, frame, delay_time);
-            delay_time = FRAME_RATE - SDL_GetTicks() % FRAME_RATE;
+            delay_time = FRAME_DELAY - SDL_GetTicks() % FRAME_DELAY;
         }
     }
 

@@ -4,7 +4,7 @@ CC = gcc
 CFLAGS = -Wall -g -m64 -Wall -D_REENTRANT
 INCLUDES=-Iinclude -I/opt/DIS/include -I/opt/DIS/src/include -I/opt/DIS/include/dis 
 
-#Library stuff?
+#OS Specific?
 BITS=$(shell sh -c 'getconf LONG_BIT || echo NA')
 
 ifeq ($(BITS),NA)

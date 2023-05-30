@@ -19,6 +19,7 @@
 #include <SDL2/SDL_pixels.h>
 
 #define FRAME_RATE 30
+#define FRAME_DELAY 1000/FRAME_RATE
 // IMPORT macro will be defined by the implementation file
 // Other clients will not define it, and will get an extern declaration
 // This prevents the compiler from complaining about multiple definitions

@@ -87,25 +87,30 @@ int main(int argc, char* argv[]){
     FrameData* frame_data = (FrameData*) malloc(sizeof(FrameData));
 
     //allocate AVframe queue for transfer
-    int queue_size = 60;
+    int queue_size = 30;
     AVFrame_Q* q = avframe_Q_alloc(queue_size);
+
+    //TEST STUFF
+    AVFrame_Q* q_2 = avframe_Q_alloc(10);
+
+
     if(!q){
         printf("Error allocating AVFrame queue: \n");
         return 1;
     }
 
     //Set filename
-    char* filename = "test.mp4";
+    char* filename = "test.webm";
 
     //Fill the queue with frames
-    struct process_video_args args = {filename, q, queue_size};
+    struct process_video_args args = {filename, q_2, 10};
     process_video(&args);
     printf("Done pre-processing video\n");
 
     // Pop frames until we get a valid frame
     frame->format = -1;
-    while(frame->format == -1 && avframe_Q_get_size(q) > 0){
-        avframe_Q_pop(q, frame);
+    while(frame->format == -1 && avframe_Q_get_size(q_2) > 0){
+        avframe_Q_pop(q_2, frame);
     }
     if (frame->format == -1){
         printf("Could not find frame with proper format: \n");
@@ -119,9 +124,6 @@ int main(int argc, char* argv[]){
         return 1;
     }
     printf("Starting SISCI transfer\n");
-
-
-
 
 
 
@@ -194,7 +196,7 @@ int main(int argc, char* argv[]){
     memcpy((FrameData*)write_address_framedata, frame_data, sizeof(FrameData));
     
     // Flush queue
-    non_sisci_err = avframe_Q_flush(q);
+    //non_sisci_err = avframe_Q_flush(q);
 
 
     // Create frame SISCI segment
@@ -205,6 +207,8 @@ int main(int argc, char* argv[]){
         return 1;
     }
 
+    // Print the buffer size
+    printf("Buffer size: %d\n", frame_data->buffer_size);
     //Create a local segment
     SCICreateSegment(v_dev_frame, &l_seg_frame, FRAME_SEGMENT_ID, frame_data->buffer_size, NO_CALLBACK, NO_ARGS, SCI_FLAG_BROADCAST, &err);
     if(err != SCI_ERR_OK){
@@ -262,6 +266,7 @@ int main(int argc, char* argv[]){
 
     //start video processing in a separate thread
     pthread_t video_thread;
+    args.q = q;
     args.stop_threshold = -1;
     if(pthread_create(&video_thread, NULL, process_video, &args)){
         printf("Error creating video processing thread: \n");
@@ -273,9 +278,10 @@ int main(int argc, char* argv[]){
     }
 
     //Playing frames as we transfer them
-    uint32_t delay_time = 0;
+    uint32_t delay_time = FRAME_DELAY;
+    int frame_end_time = 0;
+    int test = 0;
     while(1){
-        printf("Empty queue, waiting\n");
         //It should wait here until there is a frame to play
         // Possibly redundant double check
         non_sisci_err = avframe_Q_pop(q, frame);
@@ -295,14 +301,12 @@ int main(int argc, char* argv[]){
             }
             memcpy((FrameData*)write_address_framedata, frame_data, sizeof(FrameData));
 
-            //Do something if the size has changed
+            // Todo: Check if the segment size has changed
+            // Re-connect to the segment with the correct size if it has changed
+            // For now, this is not feasible since only single video transfer is supported
 
             //Transfer the frame over PCIe:
             printf("Transferring frame\n");
-
-            printf("Before memcpy\n");
-            //PCIe transfer
-            int test = 0;
             if(!test){
             int bytes_written = av_image_copy_to_buffer((uint8_t*) write_address_frame, frame_data->buffer_size , (const uint8_t **)frame->data, frame->linesize, frame->format, frame->width, frame->height, 1);
                 if (bytes_written < 0) {
@@ -312,7 +316,7 @@ int main(int argc, char* argv[]){
             }
             printf("After memcpy\n");
             
-            
+            /*
             if (test){
                 //Create AVFrame from FrameData
                 AVFrame* testframe = av_frame_alloc();
@@ -325,16 +329,17 @@ int main(int argc, char* argv[]){
                     printf("AVFrame created successfully \n");
                 }
                 update_videoplayer(&vp, testframe, delay_time);
-                delay_time = FRAME_RATE - SDL_GetTicks() % FRAME_RATE;
+                delay_time = FRAME_DELAY - SDL_GetTicks() % FRAME_DELAY;
                 av_frame_free(&testframe);
             }
-
+            */
             //Play the frame
             if (!test)
             {
             printf("Playing frame\n");
+            delay_time = FRAME_DELAY - (SDL_GetTicks()-frame_end_time)% FRAME_DELAY;
             update_videoplayer(&vp, frame, delay_time);
-            delay_time = FRAME_RATE - SDL_GetTicks() % FRAME_RATE;
+            frame_end_time = SDL_GetTicks();
             }
             
             

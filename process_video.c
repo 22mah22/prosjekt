@@ -8,7 +8,27 @@
 #define Process_video_IMPORT
 #include "process_video.h"
 
-// publicly accessible but opaque data structure:
+// Create doxygen documentation for the opaque data structure
+/**
+* @struct AVFrame_Q
+* @brief A queue of AVFrames.
+* @var AVFrame_Q::frames
+* An array of pointers to AVFrames.
+* @var AVFrame_Q::capacity
+* The capacity of the queue.
+* @var AVFrame_Q::size
+* The number of elements in the queue.
+* @var AVFrame_Q::front
+* The index of the front of the queue.
+* @var AVFrame_Q::rear
+* The index of the rear of the queue.
+* @var AVFrame_Q::mutex
+* A mutex to protect the queue.
+* @var AVFrame_Q::not_empty
+* A condition variable to signal when the queue is not empty.
+* @var AVFrame_Q::not_full
+* A condition variable to signal when the queue is not full.
+*/
 struct AVFrame_Q{
     AVFrame** frames;
     int capacity;
@@ -20,8 +40,9 @@ struct AVFrame_Q{
     pthread_cond_t not_full;
 };
 
-//Idk if this is useful?
-void av_frame_deep_copy(AVFrame* dest, const AVFrame* src) {
+static void av_frame_deep_copy(AVFrame* dest, const AVFrame* src);
+
+/*static void av_frame_deep_copy(AVFrame* dest, const AVFrame* src) {
     dest->format = src->format;
     dest->width = src->width;
     dest->height = src->height;
@@ -29,10 +50,54 @@ void av_frame_deep_copy(AVFrame* dest, const AVFrame* src) {
     dest->channel_layout = src->channel_layout;
     dest->nb_samples = src->nb_samples;
 
+    if (dest->data[0]) {
+        av_frame_unref(dest);
+    }
     av_frame_get_buffer(dest, 32);
     av_frame_copy(dest, src);
     av_frame_copy_props(dest, src);
 }
+*/
+
+static void av_frame_deep_copy(AVFrame* dest, const AVFrame* src) {
+    int ret;
+
+    printf("Before copying:\n");
+    printf("src format: %i, width: %i, height: %i, channels: %i\n", src->format, src->width, src->height, src->channels);
+
+    dest->format = src->format;
+    dest->width = src->width;
+    dest->height = src->height;
+    dest->channels = src->channels;
+    dest->channel_layout = src->channel_layout;
+    dest->nb_samples = src->nb_samples;
+
+    if (dest->data[0]) {
+        av_frame_unref(dest);
+    }
+
+    ret = av_frame_get_buffer(dest, 32);
+    if (ret < 0) {
+        fprintf(stderr, "Failed to allocate frame data.\n");
+        return;
+    }
+
+    ret = av_frame_copy(dest, src);
+    if (ret < 0) {
+        fprintf(stderr, "Failed to copy frame data.\n");
+        return;
+    }
+
+    ret = av_frame_copy_props(dest, src);
+    if (ret < 0) {
+        fprintf(stderr, "Failed to copy frame properties.\n");
+        return;
+    }
+
+    printf("After copying:\n");
+    printf("dest format: %i, width: %i, height: %i, channels: %i\n", dest->format, dest->width, dest->height, dest->channels);
+}
+
 
 int ffmpeg_init(){
     //Initialize the FFMPEG library. Deprecation issues?
@@ -107,13 +172,16 @@ void avframe_Q_destroy(AVFrame_Q* q) {
         pthread_cond_wait(&q->not_full, &q->mutex);
     }
 
-    //This aint gonna work
-    //Cant allocate without deallocating
-    //Work on deep copying into q-rear instead? Same principle as av_frame_copy
+    // print which spot in the queue was pushed
+    printf("Pushing to %i\n", q->rear);
 
     //Ok gringo what about this then:
     av_frame_deep_copy(q->frames[q->rear], frame);
 
+    //print ->format of the frame just added
+    printf("format of pushed: %i\n", q->frames[q->rear]->format);
+
+    
     q->rear = (q->rear + 1) % q->capacity;
     q->size++;
 
@@ -121,23 +189,6 @@ void avframe_Q_destroy(AVFrame_Q* q) {
     pthread_mutex_unlock(&q->mutex);
     return 0;
 }
-
-//OLD, shallow copies?
-/*int avframe_Q_push(AVFrame_Q* q, AVFrame* frame) {
-    pthread_mutex_lock(&q->mutex);
-
-    while (q->size == q->capacity) {
-        pthread_cond_wait(&q->not_full, &q->mutex);
-    }
-
-    av_frame_copy(q->frames[q->rear], frame);
-    q->rear = (q->rear + 1) % q->capacity;
-    q->size++;
-
-    pthread_cond_signal(&q->not_empty);
-    pthread_mutex_unlock(&q->mutex);
-    return 0;
-}*/
 
     /*
     * Pop a frame from the queue.
@@ -147,9 +198,16 @@ int avframe_Q_pop(AVFrame_Q* q, AVFrame* dest) {
     pthread_mutex_lock(&q->mutex);
 
     while (q->size == 0) {
+        printf("Empty queue, waiting\n");
         pthread_cond_wait(&q->not_empty, &q->mutex);
     }
-    av_frame_deep_copy(dest, q->frames[q->rear]);
+   
+    av_frame_deep_copy(dest, q->frames[q->front]);
+    // print which spot in the queue was copied
+    av_frame_unref(q->frames[q->front]);  // release memory for popped frame
+    printf("Popped %i\n", q->front);
+    printf("format of popped: %i\n", q->frames[q->front]->format);
+
     q->front = (q->front + 1) % q->capacity;
     q->size--;
 
@@ -298,16 +356,15 @@ void *process_video(void* arg){
                     args->stop_threshold--;
                 }
             }
-
-        // Free the packet
-        av_packet_unref(&packet);
-        frameFinished = 0;
         }
         else {
                 // Video ended, skip backwards until the end of the video (hopefully)
                 printf("Video ended\n");
                 av_seek_frame(format_ctx, -1, 10000, AVSEEK_FLAG_BACKWARD);
         }
+        // Free the packet
+        av_packet_unref(&packet);
+        frameFinished = 0;
     }
     // Free the frame and the codec context
     av_frame_free(&frame);
